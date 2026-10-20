@@ -4,7 +4,7 @@
 
 This project shows how trust is established between autonomous agents *before* they exchange data, using a concrete slice of a commercial credit bureau: **ingesting Secretary of State business formation filings only from authenticated, verified source agents.** It deliberately stops at the Bureau Core. No scoring, no dashboards.
 
-The founding vision and spec are in [docs/BLUEPRINT.md](docs/BLUEPRINT.md). Everything here is built from it.
+The founding vision and spec are in [docs/SPEC.md](docs/SPEC.md). Everything here is built from it.
 
 ## The idea in one walkthrough
 
@@ -159,7 +159,7 @@ curl -s http://127.0.0.1:9102/.well-known/agent-card.json | python -m json.tool
 ## Project layout
 
 ```
-docs/BLUEPRINT.md       The founding spec, with a blueprint-to-code traceability table
+docs/SPEC.md            The founding spec, with a blueprint-to-code traceability table
 trust/                  Shared core
   registry.py             Trusted agent registry
   source_agent.py         Builds and signs an envelope

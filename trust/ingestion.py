@@ -1,7 +1,7 @@
 """
 Ingestion Pipeline: validates Secretary of State business formation payloads.
 
-The schema (docs/BLUEPRINT.md, section 5):
+The schema (docs/SPEC.md, section 5):
 
     {
       "agent_metadata": {"agent_id": str, "auth_token": str, "timestamp": ISO-8601},

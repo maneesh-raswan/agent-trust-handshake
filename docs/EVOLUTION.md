@@ -1,6 +1,6 @@
 # Evolution
 
-The project started from [the blueprint](BLUEPRINT.md): trusted ingestion of Secretary of State filings into a credit bureau, stopping at the Bureau Core. This page records how the code got from there to where it is.
+The project started from [the spec](SPEC.md): trusted ingestion of Secretary of State filings into a credit bureau, stopping at the Bureau Core. This page records how the code got from there to where it is.
 
 ## Step 1: a trust-model sketch
 

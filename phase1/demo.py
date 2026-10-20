@@ -3,7 +3,7 @@ Phase 1: the trust handshake, in one process.
 
 A trusted Secretary of State connector and a rogue source submit business
 formation filings to the Bureau Core. The first two scenarios are the blueprint
-walkthrough (docs/BLUEPRINT.md, section 4); the rest are the other ways a
+walkthrough (docs/SPEC.md, section 4); the rest are the other ways a
 submission can go wrong.
 
 Run:  python -m phase1.demo

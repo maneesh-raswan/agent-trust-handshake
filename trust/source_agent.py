@@ -28,7 +28,7 @@ class SourceAgent:
         return crypto.public_key_b64(self._private_key)
 
     def submit(self, business_filing: dict) -> dict:
-        """Package a filing in the ingestion schema (see docs/BLUEPRINT.md, section 5)."""
+        """Package a filing in the ingestion schema (see docs/SPEC.md, section 5)."""
         signed_fields = {
             "agent_id": self.agent_id,
             "timestamp": now_iso(),
