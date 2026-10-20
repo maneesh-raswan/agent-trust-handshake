@@ -38,10 +38,12 @@ class Decision:
 
 
 class ConsumerAgent:
-    def __init__(self, registry_public_key: str, registry_status, ledger_path: Path):
+    def __init__(self, registry_public_key: str, registry_status, ledger_path: Path | None = None,
+                 ledger_sink=None):
         self._registry_public_key = registry_public_key  # pinned trust anchor
         self._registry_status = registry_status          # live lookup function
-        self._ledger_path = Path(ledger_path)
+        self._ledger_path = Path(ledger_path) if ledger_path else None
+        self._ledger_sink = ledger_sink  # optional callable(entry); replaces the file ledger
         self._seen_nonces: set[str] = set()
         self._signing_key = crypto.new_keypair()
 
@@ -131,5 +133,8 @@ class ConsumerAgent:
             "payload_hash": payload_hash,
             "payload": body["payload"],
         }
+        if self._ledger_sink:
+            self._ledger_sink(entry)
+            return
         with self._ledger_path.open("a") as f:
             f.write(json.dumps(entry) + "\n")

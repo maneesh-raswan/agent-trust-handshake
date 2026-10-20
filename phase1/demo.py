@@ -5,7 +5,7 @@ A Producer Agent (a data provider) sends a trade payment record to a Consumer
 Agent (the platform ingesting it). The consumer verifies the producer's business
 identity before it ingests anything, then returns a signed settlement receipt.
 
-Run:  python demo.py
+Run:  python -m phase1.demo
 """
 
 import copy

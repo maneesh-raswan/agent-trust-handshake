@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-trust-handshake"
 version = "0.1.0"
-description = "Reference implementation of trust establishment between autonomous agents before digital commerce."
+description = "How autonomous agents establish trust before digital commerce: a phase 1 in-process handshake and a phase 2 autonomous A2A + MCP system."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -13,15 +13,17 @@ authors = [{ name = "Maneesh Raswan" }]
 dependencies = ["cryptography>=42"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+phase2 = ["a2a-sdk[http-server]>=1.2", "mcp>=2.3", "httpx>=0.28", "uvicorn>=0.30"]
+dev = ["pytest>=8", "pytest-asyncio>=1.0"]
 
 [project.scripts]
-trust-demo = "demo:main"
+trust-demo = "phase1.demo:main"
+trust-phase2 = "phase2.runner:main"
 
 [tool.setuptools]
-packages = ["trust"]
-py-modules = ["demo"]
+packages = ["trust", "phase1", "phase2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+asyncio_mode = "auto"

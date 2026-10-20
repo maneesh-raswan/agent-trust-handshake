@@ -1,2 +1,7 @@
 cryptography>=42
 pytest>=8
+pytest-asyncio>=1.0
+a2a-sdk[http-server]>=1.2
+mcp>=2.3
+httpx>=0.28
+uvicorn>=0.30

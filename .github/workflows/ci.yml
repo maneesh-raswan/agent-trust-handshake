@@ -5,7 +5,8 @@ on:
   pull_request:
 
 jobs:
-  test:
+  phase1:
+    name: Phase 1 (core only)
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -15,6 +16,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      # No phase 2 extras: proves phase 1 stands alone.
       - run: pip install -e ".[dev]"
-      - run: pytest -q
-      - run: python demo.py
+      - run: pytest -q tests/phase1
+      - run: python -m phase1.demo
+
+  phase2:
+    name: Phase 2 (A2A + MCP)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev,phase2]"
+      - run: pytest -q tests/phase2
+      - run: python -m phase2.runner
