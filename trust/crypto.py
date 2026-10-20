@@ -1,7 +1,6 @@
-"""Small helpers for signing and hashing. Everything signed is canonical JSON."""
+"""Small helpers for signing. Everything signed is canonical JSON."""
 
 import base64
-import hashlib
 import json
 
 from cryptography.exceptions import InvalidSignature
@@ -15,10 +14,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 def canonical(obj) -> bytes:
     """Deterministic JSON bytes, so both sides sign and verify the exact same thing."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
-
-
-def sha256(obj) -> str:
-    return hashlib.sha256(canonical(obj)).hexdigest()
 
 
 def new_keypair() -> Ed25519PrivateKey:
@@ -41,5 +36,5 @@ def verify(public_key_b64_str: str, obj, signature_b64: str) -> bool:
         key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_b64_str))
         key.verify(base64.b64decode(signature_b64), canonical(obj))
         return True
-    except (InvalidSignature, ValueError):
+    except (InvalidSignature, ValueError, TypeError):
         return False

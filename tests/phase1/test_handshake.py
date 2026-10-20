@@ -3,117 +3,116 @@ import copy
 import pytest
 
 from trust import crypto
-from trust.consumer import ConsumerAgent
-from trust.producer import ProducerAgent
-from trust.registry import TrustRegistry
+from trust.audit import (DUPLICATE_FILING_REJECTED, INVALID_PAYLOAD_REJECTED, OUT_OF_JURISDICTION_REJECTED,
+                         REPLAY_REJECTED, SUCCESS, UNAUTHORIZED_SOURCE_REJECTED)
+from trust.bureau import BureauCore
+from trust.registry import TrustedAgentRegistry
+from trust.source_agent import SourceAgent
 
 
-def txn(txn_id="TXN-1", txn_type="trade_payment", amount=100.0):
-    return {"txn_id": txn_id, "type": txn_type, "amount": amount}
+def filing(name="Acme Logistics LLC", filing_id="C4829301", jurisdiction="CA", formed="2024-03-15"):
+    return {"legal_name": name, "state_filing_id": filing_id,
+            "formation_date": formed, "jurisdiction": jurisdiction}
 
 
 @pytest.fixture
-def setup(tmp_path):
-    registry = TrustRegistry()
+def world():
+    registry = TrustedAgentRegistry()
     key = crypto.new_keypair()
-    cred = registry.register_business("BIZ-1", "Acme", crypto.public_key_b64(key), ["trade_payment"])
-    producer = ProducerAgent(key, cred)
-    consumer = ConsumerAgent(registry.public_key, registry.status, tmp_path / "ledger.jsonl")
-    return registry, producer, consumer, cred, tmp_path / "ledger.jsonl"
+    registry.register("SOS-CA", crypto.public_key_b64(key), ["CA"])
+    return registry, SourceAgent("SOS-CA", key), BureauCore(registry.lookup)
 
 
-def test_trusted_producer_is_ingested_and_settled(setup):
-    _, producer, consumer, _, ledger = setup
-    d = consumer.receive(producer.send(txn()))
-    assert d.accepted
-    assert ProducerAgent.verify_receipt(d.receipt, consumer.public_key)
-    assert len(ledger.read_text().splitlines()) == 1
+def test_trusted_agent_filing_is_ingested_and_audited(world):
+    _, trusted, bureau = world
+    d = bureau.submit(trusted.submit(filing()))
+    assert d.status == SUCCESS
+    assert [r["legal_name"] for r in bureau.pipeline.verified_store] == ["Acme Logistics LLC"]
+    assert bureau.audit.entries[-1]["status"] == SUCCESS
 
 
-def test_self_issued_credential_is_rejected(setup):
-    _, _, consumer, cred, _ = setup
-    fake_key = crypto.new_keypair()
-    claims = dict(cred["claims"], agent_public_key=crypto.public_key_b64(fake_key))
-    fake = ProducerAgent(fake_key, {"claims": claims, "issuer_signature": crypto.sign(fake_key, claims)})
-    d = consumer.receive(fake.send(txn()))
-    assert not d.accepted and d.checks[-1][0] == "issuer"
+def test_rogue_agent_is_rejected_and_nothing_is_stored(world):
+    _, _, bureau = world
+    rogue = SourceAgent("ROGUE-1", crypto.new_keypair())
+    d = bureau.submit(rogue.submit(filing("Shell Corp Inc", "C9999999")))
+    assert d.status == UNAUTHORIZED_SOURCE_REJECTED and d.check == "identity"
+    assert bureau.pipeline.verified_store == []
+    assert bureau.audit.entries[-1]["status"] == UNAUTHORIZED_SOURCE_REJECTED
 
 
-def test_stolen_credential_without_key_is_rejected(setup):
-    _, _, consumer, cred, _ = setup
-    thief = ProducerAgent(crypto.new_keypair(), cred)  # real credential, wrong private key
-    d = consumer.receive(thief.send(txn()))
-    assert not d.accepted and d.checks[-1][0] == "signature"
+def test_impersonating_a_trusted_agent_fails_the_signature_challenge(world):
+    _, _, bureau = world
+    impostor = SourceAgent("SOS-CA", crypto.new_keypair())
+    d = bureau.submit(impostor.submit(filing("Shell Corp Inc", "C9999998")))
+    assert d.status == UNAUTHORIZED_SOURCE_REJECTED and d.check == "signature"
 
 
-def test_tampered_payload_is_rejected(setup):
-    _, producer, consumer, _, _ = setup
-    env = copy.deepcopy(producer.send(txn()))
-    env["body"]["payload"]["amount"] = 999999
-    d = consumer.receive(env)
-    assert not d.accepted and d.checks[-1][0] == "signature"
+def test_filing_altered_in_transit_is_rejected(world):
+    _, trusted, bureau = world
+    env = copy.deepcopy(trusted.submit(filing()))
+    env["business_filing"]["legal_name"] = "Shell Corp Inc"
+    d = bureau.submit(env)
+    assert d.status == UNAUTHORIZED_SOURCE_REJECTED and d.check == "signature"
 
 
-def test_replay_is_rejected(setup):
-    _, producer, consumer, _, _ = setup
-    env = producer.send(txn())
-    assert consumer.receive(env).accepted
-    d = consumer.receive(env)
-    assert not d.accepted and d.checks[-1][0] == "replay"
+def test_replayed_submission_is_rejected(world):
+    _, trusted, bureau = world
+    env = trusted.submit(filing())
+    assert bureau.submit(env).accepted
+    d = bureau.submit(env)
+    assert d.status == REPLAY_REJECTED and d.check == "replay"
 
 
-def test_out_of_scope_is_rejected(setup):
-    _, producer, consumer, _, _ = setup
-    d = consumer.receive(producer.send(txn(txn_type="credit_inquiry")))
-    assert not d.accepted and d.checks[-1][0] == "scope"
+def test_stale_timestamp_is_rejected(world):
+    _, trusted, bureau = world
+    env = trusted.submit(filing())
+    env["agent_metadata"]["timestamp"] = "2020-01-01T00:00:00Z"
+    # Re-sign so only freshness can fail.
+    signed = {"agent_id": "SOS-CA", "timestamp": "2020-01-01T00:00:00Z", "business_filing": env["business_filing"]}
+    env["agent_metadata"]["auth_token"] = crypto.sign(trusted._private_key, signed)
+    d = bureau.submit(env)
+    assert d.status == REPLAY_REJECTED and d.check == "freshness"
 
 
-def test_revoked_business_is_rejected(setup):
-    registry, producer, consumer, _, ledger = setup
-    registry.revoke("BIZ-1")
-    d = consumer.receive(producer.send(txn()))
-    assert not d.accepted and d.checks[-1][0] == "status"
-    assert not ledger.exists()
+def test_filing_outside_the_agents_jurisdiction_is_rejected(world):
+    _, trusted, bureau = world
+    d = bureau.submit(trusted.submit(filing(jurisdiction="DE", filing_id="D1000234")))
+    assert d.status == OUT_OF_JURISDICTION_REJECTED
 
 
-def test_expired_credential_is_rejected(setup, monkeypatch):
-    _, producer, consumer, cred, _ = setup
-    import trust.consumer as c
-    future = cred["claims"]["expires_at"] + 1
-    monkeypatch.setattr(c.time, "time", lambda: future)
-    env = producer.send(txn())
-    env["body"]["sent_at"] = future  # keep it fresh so only expiry can fail
-    d = consumer.receive(env)
-    assert not d.accepted and d.checks[-1][0] == "expiry"
+@pytest.mark.parametrize("bad", [
+    {"formed": "2024-13-45"}, {"formed": "2999-01-01"}, {"jurisdiction": "California"}, {"filing_id": "x"},
+])
+def test_invalid_payload_is_rejected(world, bad):
+    _, trusted, bureau = world
+    d = bureau.submit(trusted.submit(filing(**bad)))
+    assert d.status == INVALID_PAYLOAD_REJECTED and bureau.pipeline.verified_store == []
 
 
-def test_stale_message_is_rejected(setup, monkeypatch):
-    _, producer, consumer, _, _ = setup
-    import trust.consumer as c
-    env = producer.send(txn())
-    real = c.time.time()
-    monkeypatch.setattr(c.time, "time", lambda: real + 3600)
-    d = consumer.receive(env)
-    assert not d.accepted and d.checks[-1][0] == "freshness"
+def test_duplicate_filing_is_rejected(world):
+    _, trusted, bureau = world
+    assert bureau.submit(trusted.submit(filing())).accepted
+    assert bureau.submit(trusted.submit(filing())).status == DUPLICATE_FILING_REJECTED
 
 
-def test_unknown_business_is_rejected(setup):
-    registry, producer, consumer, _, _ = setup
-    registry._businesses.clear()
-    d = consumer.receive(producer.send(txn()))
-    assert not d.accepted and d.checks[-1][0] == "status"
+def test_revoked_agent_is_rejected_immediately(world):
+    registry, trusted, bureau = world
+    assert bureau.submit(trusted.submit(filing())).accepted
+    registry.revoke("SOS-CA")
+    d = bureau.submit(trusted.submit(filing("Birch Freight Inc", "C4829302")))
+    assert d.status == UNAUTHORIZED_SOURCE_REJECTED and d.check == "status"
+    assert len(bureau.pipeline.verified_store) == 1
 
 
-def test_malformed_envelope_is_rejected_not_crashed(setup):
-    _, _, consumer, _, _ = setup
-    for bad in ({}, {"credential": None}, {"credential": {"claims": {}}, "body": {}}):
-        d = consumer.receive(bad)
-        assert not d.accepted and d.checks[-1][0] == "format"
+@pytest.mark.parametrize("junk", [None, "x", {}, {"agent_metadata": None}, {"agent_metadata": {}, "business_filing": {}}])
+def test_malformed_envelopes_are_rejected_not_crashed(world, junk):
+    _, _, bureau = world
+    assert bureau.submit(junk).status == INVALID_PAYLOAD_REJECTED
 
 
-def test_forged_receipt_fails_verification(setup):
-    _, producer, consumer, _, _ = setup
-    d = consumer.receive(producer.send(txn()))
-    forged = copy.deepcopy(d.receipt)
-    forged["claims"]["status"] = "refunded"
-    assert not ProducerAgent.verify_receipt(forged, consumer.public_key)
+def test_every_submission_is_audited_with_a_reason(world):
+    _, trusted, bureau = world
+    bureau.submit(trusted.submit(filing()))
+    bureau.submit(SourceAgent("ROGUE-1", crypto.new_keypair()).submit(filing("Shell Corp Inc", "C9999999")))
+    assert [e["status"] for e in bureau.audit.entries] == [SUCCESS, UNAUTHORIZED_SOURCE_REJECTED]
+    assert all(e["reason"] for e in bureau.audit.entries)

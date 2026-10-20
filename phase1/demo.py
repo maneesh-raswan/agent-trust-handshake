@@ -1,100 +1,89 @@
 """
-Agent-to-agent trust handshake demo.
+Phase 1: the trust handshake, in one process.
 
-A Producer Agent (a data provider) sends a trade payment record to a Consumer
-Agent (the platform ingesting it). The consumer verifies the producer's business
-identity before it ingests anything, then returns a signed settlement receipt.
+A trusted Secretary of State connector and a rogue source submit business
+formation filings to the Bureau Core. The first two scenarios are the blueprint
+walkthrough (docs/BLUEPRINT.md, section 4); the rest are the other ways a
+submission can go wrong.
 
 Run:  python -m phase1.demo
 """
 
 import copy
-import tempfile
-from pathlib import Path
 
 from trust import crypto
-from trust.consumer import ConsumerAgent
-from trust.producer import ProducerAgent
-from trust.registry import TrustRegistry
+from trust.audit import SUCCESS
+from trust.bureau import BureauCore
+from trust.registry import TrustedAgentRegistry
+from trust.source_agent import SourceAgent
 
 GREEN, RED, DIM, BOLD, RESET = "\033[32m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
 
 
-def trade_payment(txn_id: str, amount: float, txn_type: str = "trade_payment") -> dict:
-    return {
-        "txn_id": txn_id,
-        "type": txn_type,
-        "debtor_business_id": "BIZ-778812",
-        "amount": amount,
-        "currency": "USD",
-        "terms": "NET30",
-        "days_beyond_terms": 0,
-    }
+def filing(name, filing_id, jurisdiction="CA", formed="2024-03-15"):
+    return {"legal_name": name, "state_filing_id": filing_id,
+            "formation_date": formed, "jurisdiction": jurisdiction}
 
 
-def show(title: str, decision) -> None:
+def show(title, decision):
+    color = GREEN if decision.accepted else RED
     print(f"\n{BOLD}{title}{RESET}")
-    for name, passed, detail in decision.checks:
-        mark = f"{GREEN}PASS{RESET}" if passed else f"{RED}FAIL{RESET}"
-        print(f"  {mark}  {name:<10} {DIM}{detail}{RESET}")
-    if decision.accepted:
-        r = decision.receipt["claims"]
-        print(f"  {GREEN}INGESTED{RESET}  receipt {r['txn_id']} status={r['status']} "
-              f"hash={r['payload_hash'][:12]}...")
-    else:
-        print(f"  {RED}REJECTED{RESET}  {decision.reason}")
+    print(f"  {color}{decision.status}{RESET}  {DIM}[{decision.check}] {decision.reason}{RESET}")
 
 
 def main() -> None:
-    ledger = Path(tempfile.mkdtemp()) / "ledger.jsonl"
+    # Setup: the bureau trusts one connector, for California filings only.
+    registry = TrustedAgentRegistry()
+    trusted_key = crypto.new_keypair()
+    registry.register("SOS-CA-CONNECTOR", crypto.public_key_b64(trusted_key), ["CA"])
+    trusted = SourceAgent("SOS-CA-CONNECTOR", trusted_key)
+    bureau = BureauCore(registry.lookup)
 
-    # Setup: the registry verifies Acme Supply and binds its agent's key.
-    registry = TrustRegistry()
-    acme_key = crypto.new_keypair()
-    acme_credential = registry.register_business(
-        business_id="BIZ-100245",
-        legal_name="Acme Supply Co.",
-        agent_public_key=crypto.public_key_b64(acme_key),
-        scopes=["trade_payment"],
-    )
-    producer = ProducerAgent(acme_key, acme_credential)
-    consumer = ConsumerAgent(registry.public_key, registry.status, ledger)
+    # 1. Blueprint walkthrough, trusted ingestion.
+    sent = trusted.submit(filing("Acme Logistics LLC", "C4829301"))
+    show("1. Trusted agent files Acme Logistics LLC", bureau.submit(sent))
 
-    # 1. Happy path: verified producer sends a valid record.
-    first = producer.send(trade_payment("TXN-0001", 12500.00))
-    d = consumer.receive(first)
-    show("1. Verified producer sends a trade payment", d)
-    settled = ProducerAgent.verify_receipt(d.receipt, consumer.public_key)
-    print(f"  Producer verifies signed receipt: {GREEN if settled else RED}{settled}{RESET}")
+    # 2. Blueprint walkthrough, rejected ingestion.
+    rogue = SourceAgent("ROGUE-AGENT-7", crypto.new_keypair())
+    show("2. Rogue agent files Shell Corp Inc", bureau.submit(rogue.submit(filing("Shell Corp Inc", "C9999999"))))
 
-    # 2. Impostor: claims to be Acme, but issues its own credential.
-    impostor_key = crypto.new_keypair()
-    fake_claims = dict(acme_credential["claims"], agent_public_key=crypto.public_key_b64(impostor_key))
-    fake_credential = {"claims": fake_claims, "issuer_signature": crypto.sign(impostor_key, fake_claims)}
-    impostor = ProducerAgent(impostor_key, fake_credential)
-    show("2. Impostor claims Acme's identity with a self-issued credential",
-         consumer.receive(impostor.send(trade_payment("TXN-0002", 99000.00))))
+    # 3. The rogue claims the trusted agent's identity but cannot sign as it.
+    impostor = SourceAgent("SOS-CA-CONNECTOR", crypto.new_keypair())
+    show("3. Rogue impersonates the trusted agent", bureau.submit(impostor.submit(filing("Shell Corp Inc", "C9999998"))))
 
-    # 3. Tampered in transit: amount changed after the producer signed it.
-    tampered = copy.deepcopy(producer.send(trade_payment("TXN-0003", 4200.00)))
-    tampered["body"]["payload"]["amount"] = 420000.00
-    show("3. Record altered in transit (amount 4,200 changed to 420,000)", consumer.receive(tampered))
+    # 4. A real submission altered in transit.
+    tampered = copy.deepcopy(trusted.submit(filing("Birch Freight Inc", "C4829302")))
+    tampered["business_filing"]["legal_name"] = "Shell Corp Inc"
+    show("4. Filing altered after the agent signed it", bureau.submit(tampered))
 
-    # 4. Replay: the exact message from step 1 is sent again.
-    show("4. Replay of an already ingested message", consumer.receive(first))
+    # 5. The exact message from step 1 sent again.
+    show("5. Replay of an already accepted submission", bureau.submit(sent))
 
-    # 5. Out of scope: Acme is real, but not authorized to send credit inquiries.
-    show("5. Verified producer sends a data type it is not authorized for",
-         consumer.receive(producer.send(trade_payment("TXN-0005", 0, txn_type="credit_inquiry"))))
+    # 6. Trusted agent, but a Delaware filing from a California connector.
+    show("6. Trusted agent files outside its jurisdiction",
+         bureau.submit(trusted.submit(filing("Cedar Holdings LLC", "D1000234", jurisdiction="DE"))))
 
-    # 6. Revoked: the registry revokes Acme. Its credential is still unexpired,
-    #    but the live status check stops it.
-    registry.revoke("BIZ-100245")
-    show("6. Producer sends after its business was revoked in the registry",
-         consumer.receive(producer.send(trade_payment("TXN-0006", 8800.00))))
+    # 7. Trusted agent sends a payload that fails validation.
+    show("7. Trusted agent sends an invalid formation date",
+         bureau.submit(trusted.submit(filing("Dune Supply Co", "C4829303", formed="2024-13-45"))))
 
-    print(f"\n{BOLD}Ledger{RESET} {DIM}({ledger}){RESET}")
-    print("  " + ledger.read_text().strip().replace("\n", "\n  "))
+    # 8. The same filing, submitted again with a fresh token.
+    show("8. Trusted agent files an already ingested filing again",
+         bureau.submit(trusted.submit(filing("Acme Logistics LLC", "C4829301"))))
+
+    # 9. The registry revokes the agent; the very next submission is refused.
+    registry.revoke("SOS-CA-CONNECTOR")
+    show("9. Trusted agent files after being revoked",
+         bureau.submit(trusted.submit(filing("Elm Partners LP", "C4829304"))))
+
+    print(f"\n{BOLD}Verified store{RESET}")
+    for r in bureau.pipeline.verified_store:
+        print(f"  {r['state_filing_id']}  {r['legal_name']} ({r['jurisdiction']}, formed {r['formation_date']})"
+              f"  via {r['submitted_by']}")
+    print(f"\n{BOLD}Audit log{RESET}")
+    for e in bureau.audit.entries:
+        color = GREEN if e["status"] == SUCCESS else RED
+        print(f"  {color}{e['status']:<30}{RESET} {e['agent_id']:<18} {e['legal_name']}")
 
 
 if __name__ == "__main__":

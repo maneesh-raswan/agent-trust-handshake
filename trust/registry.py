@@ -1,64 +1,27 @@
 """
-Trust Registry: the "bureau" in the middle.
+Trusted agent registry: which source agents the bureau trusts.
 
-It knows which businesses are real and verified, binds each business to the
-public key of the agent allowed to act for it, and issues a signed Business
-Identity Credential. It also answers live status checks, so a credential that
-was valid yesterday can be revoked today.
+A record binds an agent_id to the public key it must sign with, the
+jurisdictions it may file for, and a live status. Revoking an agent takes
+effect on its very next submission.
 """
 
-import time
 
-from . import crypto
+class TrustedAgentRegistry:
+    def __init__(self):
+        self._agents: dict[str, dict] = {}
 
-CREDENTIAL_TTL_SECONDS = 30 * 24 * 3600  # 30 days
-
-
-class TrustRegistry:
-    def __init__(self, name: str = "demo-trust-registry"):
-        self.name = name
-        self._signing_key = crypto.new_keypair()
-        self._businesses: dict[str, dict] = {}
-
-    @property
-    def public_key(self) -> str:
-        """Published once. Every consumer pins this key."""
-        return crypto.public_key_b64(self._signing_key)
-
-    def register_business(
-        self,
-        business_id: str,
-        legal_name: str,
-        agent_public_key: str,
-        scopes: list[str],
-        ttl_seconds: int = CREDENTIAL_TTL_SECONDS,
-    ) -> dict:
-        """Verify a business (assumed done offline, like KYB) and issue its agent a credential."""
-        self._businesses[business_id] = {
-            "legal_name": legal_name,
-            "agent_public_key": agent_public_key,
+    def register(self, agent_id: str, public_key: str, jurisdictions: list[str]) -> None:
+        self._agents[agent_id] = {
+            "agent_id": agent_id,
+            "public_key": public_key,
+            "jurisdictions": list(jurisdictions),
             "status": "active",
         }
-        now = int(time.time())
-        claims = {
-            "issuer": self.name,
-            "business_id": business_id,
-            "legal_name": legal_name,
-            "agent_public_key": agent_public_key,
-            "scopes": scopes,
-            "issued_at": now,
-            "expires_at": now + ttl_seconds,
-        }
-        return {"claims": claims, "issuer_signature": crypto.sign(self._signing_key, claims)}
 
-    def record(self, business_id: str) -> dict | None:
-        """The registry's own record for a business (None if never registered)."""
-        return self._businesses.get(business_id)
+    def revoke(self, agent_id: str) -> None:
+        self._agents[agent_id]["status"] = "revoked"
 
-    def revoke(self, business_id: str) -> None:
-        self._businesses[business_id]["status"] = "revoked"
-
-    def status(self, business_id: str) -> str:
-        """Live lookup. In production this is an API call to the registry."""
-        record = self._businesses.get(business_id)
-        return record["status"] if record else "unknown"
+    def lookup(self, agent_id: str) -> dict | None:
+        record = self._agents.get(agent_id)
+        return dict(record) if record else None

@@ -11,58 +11,41 @@ from trust import crypto
 @pytest.fixture
 async def registry():
     port = free_port()
-    app, core = build_registry_app(port)
+    app, _ = build_registry_app(port)
     task = asyncio.create_task(serve(app, port))
     url = f"http://127.0.0.1:{port}"
     await wait_ready(url)
-    yield url, core
+    yield url
     task.cancel()
 
 
-def onboarding(business_id="BIZ-100245", scopes=("trade_payment",), key=None):
-    key = key or crypto.new_keypair()
-    return key, {"business_id": business_id, "agent_public_key": crypto.public_key_b64(key),
-                 "scopes": list(scopes)}
+def key_args(agent_id="SOS-CA-CONNECTOR", key=None):
+    return {"agent_id": agent_id, "public_key": crypto.public_key_b64(key or crypto.new_keypair())}
 
 
-async def test_kyb_verified_business_gets_a_credential_signed_by_the_registry(registry):
-    url, core = registry
-    _, args = onboarding()
-    out = await call(url, "register_business", args)
-    cred = out.data["credential"]
-    assert out.state == COMPLETED
-    assert crypto.verify(core.public_key, cred["claims"], cred["issuer_signature"])
+async def test_vetted_source_can_register_with_its_jurisdictions(registry):
+    out = await call(registry, "register_agent", key_args())
+    assert out.state == COMPLETED and out.data["jurisdictions"] == ["CA"]
+    record = (await call(registry, "lookup_agent", {"agent_id": "SOS-CA-CONNECTOR"})).data["agent"]
+    assert record["status"] == "active" and record["jurisdictions"] == ["CA"]
 
 
-async def test_unvetted_business_cannot_onboard(registry):
-    url, _ = registry
-    _, args = onboarding(business_id="BIZ-666666")
-    assert (await call(url, "register_business", args)).state == REJECTED
+async def test_unvetted_source_cannot_register(registry):
+    assert (await call(registry, "register_agent", key_args("ROGUE-AGENT-7"))).state == REJECTED
+    assert (await call(registry, "lookup_agent", {"agent_id": "ROGUE-AGENT-7"})).data["agent"] is None
 
 
-async def test_granted_scopes_are_capped_at_what_kyb_approved(registry):
-    url, _ = registry
-    _, args = onboarding(scopes=("trade_payment", "credit_inquiry"))
-    out = await call(url, "register_business", args)
-    assert out.data["credential"]["claims"]["scopes"] == ["trade_payment"]
-
-
-async def test_renewal_requires_the_registered_key(registry):
-    url, _ = registry
-    key, args = onboarding()
-    await call(url, "register_business", args)
-    _, other = onboarding()
-    assert (await call(url, "renew_credential", other)).state == REJECTED
-    assert (await call(url, "renew_credential", args)).state == COMPLETED
+async def test_an_agent_id_cannot_be_taken_over_with_a_second_key(registry):
+    args = key_args()
+    await call(registry, "register_agent", args)
+    assert (await call(registry, "register_agent", key_args())).state == REJECTED
+    assert (await call(registry, "register_agent", args)).state == COMPLETED  # same key is fine
 
 
 async def test_high_severity_watchlist_event_revokes_autonomously(registry):
-    url, _ = registry
-    _, args = onboarding()
-    await call(url, "register_business", args)
-    assert (await call(url, "get_status", {"business_id": "BIZ-100245"})).data["status"] == "active"
-    await call(url, "watchlist_event", {"business_id": "BIZ-100245", "severity": "low"})
-    assert (await call(url, "get_status", {"business_id": "BIZ-100245"})).data["status"] == "active"
-    await call(url, "watchlist_event", {"business_id": "BIZ-100245", "severity": "high"})
-    assert (await call(url, "get_status", {"business_id": "BIZ-100245"})).data["status"] == "revoked"
-    assert (await call(url, "renew_credential", args)).state == REJECTED
+    await call(registry, "register_agent", key_args())
+    status = lambda: call(registry, "lookup_agent", {"agent_id": "SOS-CA-CONNECTOR"})  # noqa: E731
+    await call(registry, "watchlist_event", {"agent_id": "SOS-CA-CONNECTOR", "severity": "low"})
+    assert (await status()).data["agent"]["status"] == "active"
+    await call(registry, "watchlist_event", {"agent_id": "SOS-CA-CONNECTOR", "severity": "high"})
+    assert (await status()).data["agent"]["status"] == "revoked"
