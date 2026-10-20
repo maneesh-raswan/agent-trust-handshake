@@ -64,18 +64,57 @@ The envelope is the blueprint's ingestion schema:
 
 Every entry records the check that failed and why.
 
-## Quick start
+## Run the demo
 
-Python 3.10+.
+Needs Python 3.10+.
 
 ```bash
-make setup          # venv + everything
-make phase1-demo    # nine scenarios, in process
-make phase2-demo    # autonomous run: 4 A2A agents, 2 MCP tool servers
-make test           # both phases
+make setup          # one time: creates .venv and installs everything
+make phase2-demo    # the autonomous demo, about 7 seconds
 ```
 
-Without make: `pip install -e ".[dev,phase2]"`, then `python -m phase1.demo` and `python -m phase2.runner`. Phase 1 stands alone: `pip install -e ".[dev]"` and `make phase1-test` is all it needs.
+Other commands: `make phase1-demo` (nine scenarios, in process), `make test` (both phases). Without make: `pip install -e ".[dev,phase2]"`, then `python -m phase2.runner`. Phase 1 stands alone: `pip install -e ".[dev]"` is all it needs.
+
+`make phase2-demo` starts the registry, the Bureau Core, a trusted source agent and a rogue source agent as separate processes, and prints one live timeline of what they do. You do not type anything. The time, the agent, then what it did:
+
+```
++ 1.7s bureau    UNAUTHORIZED_SOURCE_REJECTED  'Shell Corp Inc' from ROGUE-AGENT-7  [identity] agent is not in the trusted registry
++ 1.7s bureau    SUCCESS  'Acme Logistics LLC' from SOS-CA-CONNECTOR  [all] filing ingested into the verified store
++ 3.2s bureau    QUARANTINED ROGUE-AGENT-7 after 3 unauthorized submissions
++ 3.2s bureau    OUT_OF_JURISDICTION_REJECTED  'Cedar Holdings LLC' from SOS-CA-CONNECTOR  [jurisdiction] agent may file for ['CA'], not 'DE'
++ 4.0s rogue     ADAPT: ROGUE-AGENT-7 is blocked: claiming the trusted agent's identity
++ 4.7s bureau    UNAUTHORIZED_SOURCE_REJECTED  'Vapor Holdings Corp' from SOS-CA-CONNECTOR  [signature] auth_token invalid: wrong key, or the filing was altered
++ 5.4s rogue     GIVE UP: every route is blocked: stopping
++ 5.5s registry  REVOKED SOS-CA-CONNECTOR (source=sanctions-watchlist, severity=high) automatically
++ 6.2s trusted   HALT: bureau no longer accepts this identity (status): holding all remaining filings
+```
+
+The first two lines are the blueprint walkthrough: the rogue's `Shell Corp Inc` is refused while the trusted agent's `Acme Logistics LLC` goes through. The run then ends with what the bureau holds and a verdict:
+
+```
+Verified store (written through the MCP store tool)
+  C4829301  Acme Logistics LLC (CA, formed 2024-03-15)  via SOS-CA-CONNECTOR
+  C4829302  Birch Freight Inc (CA, formed 2024-04-02)  via SOS-CA-CONNECTOR
+  C4829304  Elm Partners LP (CA, formed 2024-05-21)  via SOS-CA-CONNECTOR
+  C4829305  Fjord Imports Corp (CA, formed 2024-06-30)  via SOS-CA-CONNECTOR
+
+Audit log
+  UNAUTHORIZED_SOURCE_REJECTED   6
+  SUCCESS                        4
+  OUT_OF_JURISDICTION_REJECTED   1
+  QUARANTINED_SOURCE_REJECTED    1
+  INVALID_PAYLOAD_REJECTED       1
+
+Invariants
+  PASS  every filing in the verified store came from the trusted agent
+  PASS  nothing the rogue agent submitted reached the verified store
+  PASS  the rogue's own identity was rejected as unauthorized, then quarantined without an operator
+  ... (11 in all)
+
+All invariants held.
+```
+
+**What an invariant is.** A statement that must be true however the run unfolds, whatever the timing. "Nothing the rogue submitted reached the verified store" is one. The agents act on their own, so no two runs are identical, and the runner cannot compare against a fixed expected output. Instead it checks these statements against the audit log and the store when the run ends. If any fails, it prints `INVARIANT FAILURE` and exits non-zero, which is how the same demo works as an end-to-end test in CI.
 
 ## Phase 2: what the agents do on their own
 
@@ -97,20 +136,7 @@ Nobody scripts the behaviour. Started with only each other's addresses:
 - **Bureau Core** asks the registry for live status on every submission and **fails closed** if it cannot. It **quarantines** an agent_id the registry has never heard of after three attempts.
 - **Registry** only registers sources the bureau vetted, one key per agent_id, and **revokes by itself** when a high-severity watchlist signal arrives.
 
-The runner finishes by checking invariants (only the trusted agent's filings were stored, nothing from the rogue got in, the rogue was quarantined and gave up, the registry revoked and the trusted agent halted, every submission was audited). Exit code is non-zero if any fails, so it doubles as an end-to-end test.
-
-Sample timeline (abridged):
-
-```
-+ 1.7s bureau    UNAUTHORIZED_SOURCE_REJECTED  'Shell Corp Inc' from ROGUE-AGENT-7  [identity] agent is not in the trusted registry
-+ 1.7s bureau    SUCCESS  'Acme Logistics LLC' from SOS-CA-CONNECTOR  [all] filing ingested into the verified store
-+ 3.2s bureau    QUARANTINED ROGUE-AGENT-7 after 3 unauthorized submissions
-+ 3.2s bureau    OUT_OF_JURISDICTION_REJECTED  'Cedar Holdings LLC' from SOS-CA-CONNECTOR  [jurisdiction] agent may file for ['CA'], not 'DE'
-+ 4.0s rogue     ADAPT: ROGUE-AGENT-7 is blocked: claiming the trusted agent's identity
-+ 4.7s bureau    UNAUTHORIZED_SOURCE_REJECTED  'Vapor Holdings Corp' from SOS-CA-CONNECTOR  [signature] auth_token invalid
-+ 5.5s registry  REVOKED SOS-CA-CONNECTOR (source=sanctions-watchlist, severity=high) automatically
-+ 6.2s trusted   HALT: bureau no longer accepts this identity (status): holding all remaining filings
-```
+The runner finishes by checking the invariants described in [Run the demo](#run-the-demo).
 
 To run the services yourself in separate terminals:
 

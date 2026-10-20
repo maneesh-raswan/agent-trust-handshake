@@ -5,7 +5,7 @@
 
 ## 1. Context: What a Commercial Credit Bureau Does
 
-Commercial credit bureaus (such as Dun & Bradstreet, Experian Business, and Equifax Business) aggregate data from suppliers, public records, and financial institutions to evaluate creditworthiness, assess financial risk, and predict business reliability. They compile payment histories, public records, and financial accounts into a unified profile that lenders, vendors, insurance companies, and government contractors use to determine whether, and under what terms, to do business with a company.
+Commercial credit bureaus (such as Experian Business, Dun & Bradstreet, and Equifax Business) aggregate data from suppliers, public records, and financial institutions to evaluate creditworthiness, assess financial risk, and predict business reliability. They compile payment histories, public records, and financial accounts into a unified profile that lenders, vendors, insurance companies, and government contractors use to determine whether, and under what terms, to do business with a company.
 
 For any credit profile to be valuable, the underlying data received from suppliers and sources must come from trusted, authentic originators.
 
