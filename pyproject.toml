@@ -14,14 +14,16 @@ dependencies = ["cryptography>=42"]
 
 [project.optional-dependencies]
 phase2 = ["a2a-sdk[http-server]>=1.2", "mcp>=2.3", "httpx>=0.28", "uvicorn>=0.30"]
+phase3 = ["anthropic>=1.0"]
 dev = ["pytest>=8", "pytest-asyncio>=1.0"]
 
 [project.scripts]
 trust-demo = "phase1.demo:main"
 trust-phase2 = "phase2.runner:main"
+trust-phase3 = "phase3.runner:main"
 
 [tool.setuptools]
-packages = ["trust", "phase1", "phase2"]
+packages = ["trust", "phase1", "phase2", "phase3"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

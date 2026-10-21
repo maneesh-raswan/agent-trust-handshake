@@ -40,6 +40,14 @@ async def world():
     task.cancel()
 
 
+async def test_store_and_audit_reads_are_operator_only(world, monkeypatch):
+    bureau, _, store = world
+    monkeypatch.setenv("TRUST_ADMIN_TOKEN", "test-admin")
+    assert (await bureau.get_store({})).state == REJECTED
+    assert (await bureau.get_audit({"admin_token": "guess"})).state == REJECTED
+    assert (await bureau.get_audit({"admin_token": "test-admin"})).state == COMPLETED
+
+
 async def test_accepted_filing_goes_to_the_store_and_the_audit_log(world):
     bureau, trusted, store = world
     out = await bureau.submit_filing({"envelope": trusted.submit(filing())})

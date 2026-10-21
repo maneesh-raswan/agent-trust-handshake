@@ -14,7 +14,9 @@ such drift would silently break verification.
 """
 
 import asyncio
+import hmac
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -129,6 +131,19 @@ def _first_data(message: Message) -> dict:
         if part.HasField("data"):
             return MessageToDict(part.data)
     raise KeyError("no data part")
+
+
+def require_admin(args: dict) -> Outcome | None:
+    """Operator-only skills demand the shared admin token. Returns a refusal, or None if allowed.
+
+    Fails closed: with no TRUST_ADMIN_TOKEN configured, no one is an operator. These skills are
+    also left out of the Agent Card, so a discovering agent is not even told they exist.
+    """
+    expected = os.environ.get("TRUST_ADMIN_TOKEN", "")
+    given = str(args.get("admin_token", ""))
+    if not expected or not hmac.compare_digest(expected, given):
+        return Outcome(REJECTED, {"reason": "operator only"}, "operator-only skill: admin token required")
+    return None
 
 
 def make_card(name: str, description: str, port: int, skills: list[tuple[str, str]],

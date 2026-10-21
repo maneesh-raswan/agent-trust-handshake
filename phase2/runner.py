@@ -16,6 +16,8 @@ Exit code is non-zero if any invariant fails.
 
 import asyncio
 import json
+import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -120,11 +122,13 @@ async def run_scenario(quiet: bool = False, interval: float = 0.7, timeout: floa
     t0 = time.time()
     tail = Tail(log, t0, quiet)
     procs: list[subprocess.Popen] = []
+    admin = secrets.token_hex(16)  # operator credential for this run only
 
     def spawn(name: str, module: str, *args: str) -> None:
         out = open(run_dir / f"{name}.out", "w")
         procs.append(subprocess.Popen([sys.executable, "-m", module, *args, "--log", str(log)],
-                                      stdout=out, stderr=subprocess.STDOUT))
+                                      stdout=out, stderr=subprocess.STDOUT,
+                                      env={**os.environ, "TRUST_ADMIN_TOKEN": admin}))
 
     report = Report()
     try:
@@ -147,7 +151,8 @@ async def run_scenario(quiet: bool = False, interval: float = 0.7, timeout: floa
                 signalled = True
                 log_event(str(log), "runner", "note", note=f"external risk signal: watchlist hit on {TRUSTED_ID} sent to the registry")
                 await call(urls["registry"], "watchlist_event",
-                           {"agent_id": TRUSTED_ID, "source": "sanctions-watchlist", "severity": "high"})
+                           {"agent_id": TRUSTED_ID, "source": "sanctions-watchlist", "severity": "high",
+                            "admin_token": admin})
             if tail.count("trusted", "finished") and tail.count("rogue", "finished"):
                 break
             await asyncio.sleep(0.1)
@@ -156,8 +161,8 @@ async def run_scenario(quiet: bool = False, interval: float = 0.7, timeout: floa
 
         report.trusted = (await call(urls["trusted"], "get_report")).data
         report.rogue = (await call(urls["rogue"], "get_report")).data
-        report.store = (await call(urls["bureau"], "get_store")).data["filings"]
-        report.audit = (await call(urls["bureau"], "get_audit")).data["entries"]
+        report.store = (await call(urls["bureau"], "get_store", {"admin_token": admin})).data["filings"]
+        report.audit = (await call(urls["bureau"], "get_audit", {"admin_token": admin})).data["entries"]
         report.events = tail.events
         check_invariants(report)
         if not quiet:

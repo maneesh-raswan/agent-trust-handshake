@@ -11,7 +11,7 @@ autonomous bureau needs on top:
     has never heard of is blocked outright, with no operator involved
   - storage through MCP: verified filings and audit entries go to the store tool server
 
-Skills: submit_filing, get_store, get_audit
+Skills: submit_filing (public); get_store, get_audit (operator-only, need TRUST_ADMIN_TOKEN)
 
 Run:  python -m phase2.bureau_core --port 9102 --registry-url http://127.0.0.1:9101 --store-dir ./data
 """
@@ -23,7 +23,8 @@ from collections import Counter
 from trust.bureau import BureauCore
 
 from . import mcp_util
-from .a2a_util import COMPLETED, FAILED, REJECTED, Outcome, build_app, call, log_event, make_card, serve
+from .a2a_util import (COMPLETED, FAILED, REJECTED, Outcome, build_app, call, log_event, make_card,
+                       require_admin, serve)
 
 QUARANTINE_AFTER = 3
 QUARANTINED = "QUARANTINED_SOURCE_REJECTED"
@@ -92,10 +93,10 @@ class BureauService:
         return Outcome(REJECTED, {"status": QUARANTINED, "check": "quarantine", "reason": reason}, reason)
 
     async def get_store(self, args: dict) -> Outcome:
-        return Outcome(COMPLETED, await self.store.call("read_store"))
+        return require_admin(args) or Outcome(COMPLETED, await self.store.call("read_store"))
 
     async def get_audit(self, args: dict) -> Outcome:
-        return Outcome(COMPLETED, await self.store.call("read_audit"))
+        return require_admin(args) or Outcome(COMPLETED, await self.store.call("read_audit"))
 
 
 def build_bureau_app(port: int, service: BureauService):
@@ -103,9 +104,8 @@ def build_bureau_app(port: int, service: BureauService):
         "Bureau Core",
         "Ingestion and verification engine. Authenticates the source agent before it looks at any filing.",
         port,
-        [("submit_filing", "Submit a signed business formation filing"),
-         ("get_store", "Read the verified store"),
-         ("get_audit", "Read the audit log")],
+        [("submit_filing", "Submit a signed business formation filing")],
+        # get_store and get_audit are operator-only and deliberately not advertised
     )
     return build_app(card, {"submit_filing": service.submit_filing, "get_store": service.get_store,
                             "get_audit": service.get_audit})

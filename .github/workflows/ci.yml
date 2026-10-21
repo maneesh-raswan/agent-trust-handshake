@@ -35,3 +35,19 @@ jobs:
       - run: pip install -e ".[dev,phase2]"
       - run: pytest -q tests/phase2
       - run: python -m phase2.runner
+
+  phase3:
+    name: Phase 3 (stubbed brains, no API key)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev,phase2,phase3]"
+      # CI never calls a model: the stubbed brains keep it free and deterministic.
+      - run: pytest -q tests/phase3
+      - run: python -m phase3.runner --stub

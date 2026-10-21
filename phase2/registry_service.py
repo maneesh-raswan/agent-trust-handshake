@@ -6,8 +6,8 @@ Wraps the core `TrustedAgentRegistry` and adds what a networked registry needs:
   - a vetting gate: only source agents the bureau has vetted offline can register,
     and only for the jurisdictions they were vetted for
   - one key per agent: an agent_id cannot be re-registered under a different key
-  - an autonomous risk policy: a high-severity watchlist event revokes an agent
-    immediately, with no human in the loop
+  - an autonomous risk policy: a high-severity watchlist event (operator-only, needs
+    TRUST_ADMIN_TOKEN) revokes an agent immediately, with no human in the loop
 
 Skills: register_agent, lookup_agent, watchlist_event
 
@@ -19,7 +19,7 @@ import asyncio
 
 from trust.registry import TrustedAgentRegistry
 
-from .a2a_util import COMPLETED, REJECTED, Outcome, build_app, log_event, make_card, serve
+from .a2a_util import COMPLETED, REJECTED, Outcome, build_app, log_event, make_card, require_admin, serve
 
 # Vetted offline (the bureau's onboarding process); the registry only enforces it.
 VETTED_SOURCES = {
@@ -49,7 +49,10 @@ def build_registry_app(port: int, log_path: str | None = None):
         return Outcome(COMPLETED, {"agent": registry.lookup(args.get("agent_id", ""))})
 
     async def watchlist_event(args: dict) -> Outcome:
-        """An external risk signal. The registry's own policy decides what to do."""
+        """An external risk signal from the operator. The registry's own policy decides what to do."""
+        if (refusal := require_admin(args)):
+            log("admin_denied", skill="watchlist_event")
+            return refusal
         agent_id, severity = args.get("agent_id", ""), args.get("severity", "low")
         if registry.lookup(agent_id) is None:
             return Outcome(REJECTED, {"reason": "unknown agent"}, "unknown agent")
@@ -65,8 +68,8 @@ def build_registry_app(port: int, log_path: str | None = None):
         "Which source agents the bureau trusts: vetted identity, key, jurisdictions, live status.",
         port,
         [("register_agent", "Register a vetted source agent's public key"),
-         ("lookup_agent", "Live record for an agent_id: key, jurisdictions, status"),
-         ("watchlist_event", "Ingest a risk signal; policy may revoke autonomously")],
+         ("lookup_agent", "Live record for an agent_id: key, jurisdictions, status")],
+        # watchlist_event is operator-only and deliberately not advertised
     )
     return build_app(card, {"register_agent": register_agent, "lookup_agent": lookup_agent,
                             "watchlist_event": watchlist_event}), registry

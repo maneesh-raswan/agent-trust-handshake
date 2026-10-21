@@ -13,6 +13,12 @@ class Tools:
     def __init__(self, client: Client):
         self._client = client
 
+    async def list_tools(self) -> list[dict]:
+        """The server's tool list, in the shape an LLM tool-use API expects."""
+        result = await self._client.list_tools()
+        return [{"name": t.name, "description": t.description or "", "input_schema": t.input_schema}
+                for t in result.tools]
+
     async def call(self, name: str, **arguments) -> dict:
         result = await self._client.call_tool(name, arguments)
         if result.is_error:

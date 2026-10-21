@@ -2,10 +2,15 @@ import asyncio
 
 import pytest
 
-from phase2.a2a_util import COMPLETED, REJECTED, call, serve, wait_ready
+from phase2.a2a_util import COMPLETED, REJECTED, call, fetch_card, serve, wait_ready
 from phase2.registry_service import build_registry_app
 from phase2.runner import free_port
 from trust import crypto
+
+
+@pytest.fixture(autouse=True)
+def operator(monkeypatch):
+    monkeypatch.setenv("TRUST_ADMIN_TOKEN", "test-admin")
 
 
 @pytest.fixture
@@ -45,7 +50,25 @@ async def test_an_agent_id_cannot_be_taken_over_with_a_second_key(registry):
 async def test_high_severity_watchlist_event_revokes_autonomously(registry):
     await call(registry, "register_agent", key_args())
     status = lambda: call(registry, "lookup_agent", {"agent_id": "SOS-CA-CONNECTOR"})  # noqa: E731
-    await call(registry, "watchlist_event", {"agent_id": "SOS-CA-CONNECTOR", "severity": "low"})
+    await call(registry, "watchlist_event", {"agent_id": "SOS-CA-CONNECTOR", "severity": "low", "admin_token": "test-admin"})
     assert (await status()).data["agent"]["status"] == "active"
-    await call(registry, "watchlist_event", {"agent_id": "SOS-CA-CONNECTOR", "severity": "high"})
+    await call(registry, "watchlist_event", {"agent_id": "SOS-CA-CONNECTOR", "severity": "high", "admin_token": "test-admin"})
     assert (await status()).data["agent"]["status"] == "revoked"
+
+
+async def test_watchlist_event_is_operator_only_and_not_advertised(registry):
+    await call(registry, "register_agent", key_args())
+    for args in ({}, {"admin_token": "guess"}):
+        out = await call(registry, "watchlist_event", {"agent_id": "SOS-CA-CONNECTOR", "severity": "high", **args})
+        assert out.state == REJECTED
+    record = (await call(registry, "lookup_agent", {"agent_id": "SOS-CA-CONNECTOR"})).data["agent"]
+    assert record["status"] == "active"
+    skills = [s["id"] for s in (await fetch_card(registry))["skills"]]
+    assert "watchlist_event" not in skills
+
+
+async def test_operator_skills_fail_closed_when_no_token_is_configured(registry, monkeypatch):
+    monkeypatch.delenv("TRUST_ADMIN_TOKEN")
+    await call(registry, "register_agent", key_args())
+    out = await call(registry, "watchlist_event", {"agent_id": "SOS-CA-CONNECTOR", "severity": "high", "admin_token": ""})
+    assert out.state == REJECTED

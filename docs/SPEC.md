@@ -93,3 +93,57 @@ The blueprint leaves some choices open. These are the ones we made, so the code 
 | Bureau Core | `trust/bureau.py`, served as an A2A agent by `phase2/bureau_core.py` |
 | Ingestion schema | documented and enforced in `trust/ingestion.py`; built by `trust/source_agent.py` |
 | Walkthrough 1 and 2 | first two scenarios of `phase1/demo.py`; the trusted and rogue agents in `phase2/runner.py` |
+
+## 8. Phase 3: LLM as the brain
+
+### 8.1 Where phase 2 stops
+
+In phase 2 the A2A and MCP calls are hard-coded, and in phase 3 we add an LLM as the brain.
+
+How the calls work in phase 2:
+
+- **MCP:** the source agent always calls `list_pending_filings`, then `mark_filing`. The bureau always calls `store_filing` and `audit_append`. No agent chooses a tool.
+- **A2A:** the source agent always calls `register_agent`, then `submit_filing`. The bureau always calls `lookup_agent`. The URLs come from command-line flags, so no agent discovers another.
+- **Decisions:** how a source reacts to a rejection is an `if` on the audit status. The rogue's "adaptation" is a hand-written two-step script (own identity, then impersonate).
+
+A2A and MCP are only the transport and tool plumbing here. These are autonomous services, and strictly they are not yet agents in the LLM sense.
+
+### 8.2 What phase 3 adds
+
+1. The LLM becomes the brain of the agents that need judgment.
+2. The trust decision stays out of its reach.
+
+- **Trusted source agent:** the LLM sees its MCP tool list, picks what to call, reads each A2A answer, and decides what to do next: resend, skip, halt, or escalate. It no longer follows a coded `if`.
+- **Rogue agent:** an LLM red-teams the bureau with no script, trying to get `Shell Corp Inc` in by whatever means it invents.
+- **Bureau Core:** the authentication and ingestion checks stay deterministic code, with no LLM involvement. An optional advisory layer uses an LLM to explain rejections, summarize the audit log, and spot patterns, but it cannot override a decision.
+- **Discovery:** the agents find each other from Agent Cards and find tools by listing them over MCP.
+
+### 8.3 What phase 3 must demonstrate
+
+Phase 3 demonstrates the full scope of the claim that **trust is deterministic, not model judgment**. Put a creative, possibly hallucinating or hostile LLM on the source side, and the invariants must still hold: nothing from the rogue reaches the store, and every submission is audited. The ultimate proof is that they hold with an LLM trying to break them.
+
+**Prompt injection.** A filing's `legal_name` is attacker-controlled text. Authenticating before reading means the bureau never exposes that text to a model from an unproven sender.
+
+### 8.4 Constraints
+
+- **API key:** kept in a local configuration and never committed to the GitHub repo. Anyone testing phase 3 uses their own API key.
+- **Testing:** the invariants, not exact output, are the test. CI uses a recorded or stubbed model, so it stays free and stable.
+- **Offline phases:** phases 1 and 2 stay runnable offline. Phase 3 needs access to an LLM.
+
+### 8.5 Traceability: phase 3 to code
+
+| Phase 3 item | Where it lives |
+|---|---|
+| LLM as the brain of the trusted source agent | `phase3/llm_source_agent.py --role trusted`, instructions in `phase3/prompts.py` |
+| LLM red-teaming rogue agent | `phase3/llm_source_agent.py --role rogue` |
+| Tools listed over MCP, not hard-coded | `phase3/tools.py` (`SourceKit.build_tools` lists the feed server's tools) |
+| Discovery from Agent Cards | `phase3/tools.py` (`discover_agent`, `call_agent`) |
+| Bureau Core stays deterministic | `trust/` and `phase2/bureau_core.py`, unchanged |
+| Optional advisory layer | `phase3/advisor_service.py` |
+| Prompt injection: no text from unproven senders reaches a model | `phase3/digest.py`; checked by the runner and `tests/phase3/test_digest.py` |
+| Invariants hold whatever the brains do | `phase3/runner.py` (`check_invariants`), shown to fail in `tests/phase3/test_invariants.py` |
+| Credentials local, never committed (an API key, or any other credential source the SDK supports) | `phase3/config.py`, `.env.example`, `.gitignore`, `tests/phase3/test_config_and_brain.py` |
+| Recorded or stubbed model for CI | `phase3/stub_brain.py`, `make phase3-demo-stub`, the `phase3` CI job |
+| Phases 1 and 2 stay offline | `anthropic` is imported only by the live brain; the `phase1` and `phase2` CI jobs install no phase 3 extras |
+
+Skills that operate the bureau or revoke an agent (`watchlist_event`, `get_store`, `get_audit`) are operator-only: they need an admin token and are not advertised on the Agent Cards. A discovering red team would otherwise find them.
